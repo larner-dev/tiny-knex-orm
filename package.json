@@ -1,6 +1,6 @@
 {
   "name": "tiny-knex-orm",
-  "description": "A larner.dev project",
+  "description": "A simple and clean library for manipulating single database records with knex.",
   "version": "1.0.0",
   "author": "Aaron Larner",
   "type": "module",
