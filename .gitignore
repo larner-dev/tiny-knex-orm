@@ -2,3 +2,5 @@
 node_modules
 build
 .generator/tmp
+coverage
+.env
