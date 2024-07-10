@@ -1,6 +1,6 @@
 import { Model } from "./model";
 import { describe, test, expect, beforeAll } from "vitest";
-import { DeleteStrategy } from "./deleteStrategy";
+import { DeleteStrategy } from "./DeleteStrategy";
 import knex from "knex";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";

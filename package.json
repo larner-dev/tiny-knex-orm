@@ -4,48 +4,51 @@
   "version": "1.0.2",
   "author": "Aaron Larner",
   "type": "module",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.umd.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.umd.cjs"
+    }
+  },
   "scripts": {
-    "build": "yarn build:cjs && yarn build:esm && yarn build:types",
-    "build:cjs": "./esbuild.js cjs",
-    "build:esm": "./esbuild.js esm",
-    "build:types": "tsc --project tsconfig.json --declaration --emitDeclarationOnly --outdir build/types",
-    "dev": "yarn build && concurrently 'yarn build:types --watch' 'yarn build:esm --watch'",
+    "dev": "concurrently \"tsc --watch\" \"vite build --watch\"",
+    "build": "tsc --declaration && vite build",
     "format": "prettier --write \"src/**/*.ts\"",
     "lint": "eslint .",
     "postversion": "git push && git push --tags",
+    "prepare": "yarn build",
     "prepublishOnly": "yarn test && yarn build",
     "test": "vitest --run --dir ./src",
-    "test:watch": "vitest --dir ./src",
-    "test:coverage": "vitest run --dir ./src --coverage"
+    "test-watch": "vitest --dir ./src",
+    "test-coverage": "vitest run --dir ./src --coverage"
   },
-  "exports": {
-    ".": {
-      "import": "./build/esm/index.js",
-      "require": "./build/cjs/index.cjs"
-    }
-  },
-  "types": "./build/types/index.d.ts",
-  "main": "./build/esm/index.js",
   "devDependencies": {
-    "@vitest/coverage-c8": "^0.28.5",
-    "concurrently": "7.6.0",
-    "esbuild": "0.16.16",
-    "eslint": "8.31.0",
-    "eslint-config-prettier": "8.6.0",
-    "knex": "2.4.2",
-    "prettier": "2.8.4",
-    "sqlite3": "5.1.4",
-    "typescript": "4.9.4",
-    "vitest": "0.28.1"
-  },
-  "dependencies": {
-    "@types/node": "18.11.18",
-    "@typescript-eslint/eslint-plugin": "5.48.1",
-    "@typescript-eslint/parser": "5.48.1",
-    "type-fest": "3.6.0"
+    "@types/koa": "2.14.0",
+    "@types/node": "20.11.17",
+    "@typescript-eslint/eslint-plugin": "6.21.0",
+    "@typescript-eslint/parser": "6.21.0",
+    "@vitest/coverage-v8": "2.0.2",
+    "concurrently": "8.2.2",
+    "eslint": "8.56.0",
+    "eslint-config-prettier": "9.1.0",
+    "nodemon": "3.0.3",
+    "rollup-plugin-node-externals": "7.0.1",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.8",
+    "vite-plugin-dts": "3.7.2",
+    "vitest": "2.0.2"
   },
   "peerDependencies": {
     "knex": "2.x"
+  },
+  "dependencies": {
+    "type-fest": "4.10.2"
   },
   "publishConfig": {
     "access": "public"

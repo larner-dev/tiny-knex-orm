@@ -1,3 +1,3 @@
 export { Model } from "./model";
-export { Transactable } from "./types/types";
+export type { Transactable } from "./types/types";
 export { DeleteStrategy } from "./DeleteStrategy";
