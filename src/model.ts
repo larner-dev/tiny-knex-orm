@@ -57,6 +57,14 @@ export abstract class Model<T> {
     const keys: ModelField<T>[] = Object.keys(record) as ModelField<T>[];
     const keysWithoutId = keys.filter((k) => k !== this.idField);
 
+    // Change undefined values to null
+    for (const key of keysWithoutId) {
+      if (saveRecord[key] === undefined) {
+        // @ts-expect-error allow for null
+        saveRecord[key] = null;
+      }
+    }
+
     if (!keysWithoutId.length) {
       throw new Error("NOTHING_TO_SAVE");
     }
