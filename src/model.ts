@@ -26,8 +26,8 @@ export interface ModelOptions<T> {
 }
 
 export interface ModelEvent<T> {
-  create: (record: Partial<T>, finalRecord?: T) => void;
-  update: (record: Partial<T>, finalRecord?: T) => void;
+  create: (record: Partial<T>, finalRecord: T) => void;
+  update: (record: Partial<T>, finalRecord: T) => void;
   delete: (deletedRecord: T) => void;
 }
 
@@ -133,15 +133,31 @@ export abstract class Model<T> extends EventEmitter {
       const result = await db(this.table).insert(saveRecord, ["id"]);
       id = (result[0] as T)[this.idField];
     }
+    let newRecord: T | null = null;
     if (opts.returnNew) {
-      const val = await this.fetch(
+      newRecord = await this.fetch(
         { [this.idField]: id } as unknown as T,
         opts
       );
-      this.emit(recordExists ? "update" : "create", record, val || undefined);
-      return val;
     }
-    this.emit(recordExists ? "update" : "create", record);
+    const emitUpdate = recordExists && this.listenerCount("update") > 0;
+    const emitCreate = !recordExists && this.listenerCount("create") > 0;
+    if ((emitCreate || emitUpdate) && !newRecord) {
+      newRecord = await this.fetchOrThrow(
+        { [this.idField]: id } as unknown as T,
+        opts
+      );
+    }
+    if (emitCreate) {
+      this.emit("create", record, newRecord!);
+    }
+    if (emitUpdate) {
+      this.emit("update", record, newRecord!);
+    }
+    if (opts.returnNew) {
+      return newRecord;
+    }
+
     return null;
   }
   async saveAndFetch(record: Partial<T>, opts: Transactable = {}): Promise<T> {
