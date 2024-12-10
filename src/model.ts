@@ -1,6 +1,7 @@
 import { JsonObject, JsonPrimitive } from "type-fest";
 import { Knex } from "knex";
 import { Transactable } from "./types/types";
+import EventEmitter from "events";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type KnexType = Knex<any, unknown>;
@@ -16,13 +17,19 @@ export interface ModelOptions<T> {
   parseStrategy?: (record: JsonObject) => T;
 }
 
+export interface ModelEvent<T> {
+  create: (record: Partial<T>, finalRecord?: T) => void;
+  update: (record: Partial<T>, finalRecord?: T) => void;
+  delete: (deletedRecord: T) => void;
+}
+
 type ModelField<T> = Extract<keyof T, string>;
 
 interface SaveOptions extends Transactable {
   returnNew?: boolean;
 }
 
-export abstract class Model<T> {
+export abstract class Model<T> extends EventEmitter {
   public readonly _db: KnexType;
   public readonly table: string;
   public readonly idField: ModelField<T>;
@@ -37,6 +44,7 @@ export abstract class Model<T> {
   public readonly parseStrategy?: (record: JsonObject) => T;
 
   constructor(params: ModelOptions<T>) {
+    super();
     this._db = params.db;
     this.table = params.table;
     this.idField = params.idField;
@@ -45,6 +53,27 @@ export abstract class Model<T> {
     this.deletedField = params.deletedField;
     this.parseStrategy = params.parseStrategy;
     this.deleteStrategy = params.deleteStrategy;
+  }
+
+  on<K extends keyof ModelEvent<T>>(
+    event: K,
+    listener: ModelEvent<T>[K]
+  ): this {
+    return super.on(event as string, listener);
+  }
+
+  addListener<K extends keyof ModelEvent<T>>(
+    event: K,
+    listener: ModelEvent<T>[K]
+  ): this {
+    return super.on(event as string, listener);
+  }
+
+  emit<K extends keyof ModelEvent<T>>(
+    event: K,
+    ...args: Parameters<ModelEvent<T>[K]>
+  ): boolean {
+    return super.emit(event as string, ...args);
   }
 
   private db(opts?: Transactable) {
@@ -95,8 +124,14 @@ export abstract class Model<T> {
       id = (result[0] as T)[this.idField];
     }
     if (opts.returnNew) {
-      return this.fetch({ [this.idField]: id } as unknown as T, opts);
+      const val = await this.fetch(
+        { [this.idField]: id } as unknown as T,
+        opts
+      );
+      this.emit(recordExists ? "update" : "create", record, val || undefined);
+      return val;
     }
+    this.emit(recordExists ? "update" : "create", record);
     return null;
   }
   async saveAndFetch(record: Partial<T>, opts: Transactable = {}): Promise<T> {
@@ -143,6 +178,7 @@ export abstract class Model<T> {
       } else {
         throw new Error("DELETE_NOT_IMPLEMENTED");
       }
+      this.emit("delete", found);
     }
   }
 }
