@@ -148,12 +148,24 @@ export abstract class Model<T> extends EventEmitter {
         opts
       );
     }
-    if (emitCreate) {
+    // We're in a transaction, wait for the commit before sending events
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const trx = opts.db as Knex.Transaction<any, any[]> | null;
+    if (trx?.commit) {
+      trx.commit().then(() => {
+        if (emitCreate) {
+          this.emit("create", record, newRecord!);
+        }
+        if (emitUpdate) {
+          this.emit("update", record, newRecord!);
+        }
+      });
+    } else if (emitCreate) {
       this.emit("create", record, newRecord!);
-    }
-    if (emitUpdate) {
+    } else if (emitUpdate) {
       this.emit("update", record, newRecord!);
     }
+
     if (opts.returnNew) {
       return newRecord;
     }
@@ -207,7 +219,16 @@ export abstract class Model<T> extends EventEmitter {
           new Error("DELETE_NOT_IMPLEMENTED")
         );
       }
-      this.emit("delete", found);
+      // We're in a transaction, wait for the commit before sending events
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const trx = opts.db as Knex.Transaction<any, any[]> | null;
+      if (trx?.commit) {
+        trx.commit().then(() => {
+          this.emit("delete", found);
+        });
+      } else {
+        this.emit("delete", found);
+      }
     }
   }
 }
