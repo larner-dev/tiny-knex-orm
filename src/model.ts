@@ -6,6 +6,13 @@ import EventEmitter from "events";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type KnexType = Knex<any, unknown>;
 
+interface Errors {
+  NOTHING_TO_SAVE?: unknown;
+  FAILED_TO_SAVE?: unknown;
+  RECORD_NOT_FOUND?: unknown;
+  DELETE_NOT_IMPLEMENTED?: unknown;
+}
+
 export interface ModelOptions<T> {
   db: KnexType;
   table: string;
@@ -15,6 +22,7 @@ export interface ModelOptions<T> {
   deletedField?: ModelField<T>;
   deleteStrategy?: (record: T, db: KnexType, model: Model<T>) => Promise<void>;
   parseStrategy?: (record: JsonObject) => T;
+  errors?: Errors;
 }
 
 export interface ModelEvent<T> {
@@ -42,6 +50,7 @@ export abstract class Model<T> extends EventEmitter {
     model: Model<T>
   ) => Promise<void>;
   public readonly parseStrategy?: (record: JsonObject) => T;
+  public readonly errors?: Errors;
 
   constructor(params: ModelOptions<T>) {
     super();
@@ -53,6 +62,7 @@ export abstract class Model<T> extends EventEmitter {
     this.deletedField = params.deletedField;
     this.parseStrategy = params.parseStrategy;
     this.deleteStrategy = params.deleteStrategy;
+    this.errors = params.errors;
   }
 
   on<K extends keyof ModelEvent<T>>(
@@ -95,7 +105,7 @@ export abstract class Model<T> extends EventEmitter {
     }
 
     if (!keysWithoutId.length) {
-      throw new Error("NOTHING_TO_SAVE");
+      throw this.errors?.NOTHING_TO_SAVE || new Error("NOTHING_TO_SAVE");
     }
 
     let id = record[this.idField];
@@ -140,7 +150,7 @@ export abstract class Model<T> extends EventEmitter {
       ...opts,
     });
     if (!result) {
-      throw new Error("FAILED_TO_SAVE");
+      throw this.errors?.FAILED_TO_SAVE || new Error("FAILED_TO_SAVE");
     }
     return result;
   }
@@ -163,7 +173,7 @@ export abstract class Model<T> extends EventEmitter {
   async fetchOrThrow(record: Partial<T>, opts: Transactable = {}): Promise<T> {
     const result = await this.fetch(record, opts);
     if (!result) {
-      throw new Error("RECORD_NOT_FOUND");
+      throw this.errors?.RECORD_NOT_FOUND || new Error("RECORD_NOT_FOUND");
     }
     return result;
   }
@@ -176,7 +186,10 @@ export abstract class Model<T> extends EventEmitter {
       } else if (this.deletedField) {
         await this.save({ ...record, [this.deletedField]: new Date() });
       } else {
-        throw new Error("DELETE_NOT_IMPLEMENTED");
+        throw (
+          this.errors?.DELETE_NOT_IMPLEMENTED ||
+          new Error("DELETE_NOT_IMPLEMENTED")
+        );
       }
       this.emit("delete", found);
     }
