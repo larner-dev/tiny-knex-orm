@@ -151,8 +151,8 @@ export abstract class Model<T> extends EventEmitter {
     // We're in a transaction, wait for the commit before sending events
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const trx = opts.db as Knex.Transaction<any, any[]> | null;
-    if (trx?.commit) {
-      trx.commit().then(() => {
+    if (trx?.executionPromise) {
+      trx.executionPromise.then(() => {
         if (emitCreate) {
           this.emit("create", record, newRecord!);
         }
@@ -222,8 +222,8 @@ export abstract class Model<T> extends EventEmitter {
       // We're in a transaction, wait for the commit before sending events
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const trx = opts.db as Knex.Transaction<any, any[]> | null;
-      if (trx?.commit) {
-        trx.commit().then(() => {
+      if (trx?.executionPromise) {
+        trx.executionPromise.then(() => {
           this.emit("delete", found);
         });
       } else {
