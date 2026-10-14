@@ -1,4 +1,4 @@
-import { Model } from "./model";
+import { Model, ModelEvent } from "./model";
 import { describe, test, expect, beforeAll } from "vitest";
 import { DeleteStrategy } from "./DeleteStrategy";
 import knex from "knex";
@@ -86,17 +86,25 @@ const User = new UserModel();
 const UserWithParse = new UserWithParseModel();
 const UserHardDelete = new UserHardDeleteModel();
 
-const unhandledRejectionsDuring = async (run: () => Promise<void>) => {
-  const reasons: unknown[] = [];
-  const record = (reason: unknown) => reasons.push(reason);
-  process.on("unhandledRejection", record);
+const observe = async (
+  model: Model<UserRecordType>,
+  event: keyof ModelEvent<UserRecordType>,
+  run: (emitted: unknown[][]) => Promise<unknown>
+) => {
+  const emitted: unknown[][] = [];
+  const unhandled: unknown[] = [];
+  const onEvent = (...args: unknown[]) => emitted.push(args);
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  model.on(event, onEvent);
+  process.on("unhandledRejection", onUnhandled);
   try {
-    await run();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await run(emitted);
+    await new Promise(setImmediate);
   } finally {
-    process.off("unhandledRejection", record);
+    model.off(event, onEvent);
+    process.off("unhandledRejection", onUnhandled);
   }
-  return reasons;
+  return { emitted, unhandled };
 };
 
 describe("Model", () => {
@@ -207,69 +215,86 @@ describe("Model", () => {
       );
     });
   });
-  describe("transactions", () => {
+  describe("events", () => {
+    test("emits create before save resolves when there is no transaction", async () => {
+      const observed = await observe(User, "create", async (emitted) => {
+        await User.save({ name: "direct" });
+        expect(emitted).toEqual([
+          [{ name: "direct" }, expect.objectContaining({ name: "direct" })],
+        ]);
+      });
+      expect(observed.unhandled).toEqual([]);
+    });
     test("emits create only after the transaction commits", async () => {
-      const created: string[] = [];
-      const listener = (
-        _record: Partial<UserRecordType>,
-        user: UserRecordType
-      ) => created.push(user.name);
-      User.on("create", listener);
-      try {
-        await db.transaction(async (trx) => {
+      const observed = await observe(User, "create", (emitted) =>
+        db.transaction(async (trx) => {
           await User.save({ name: "committed" }, { db: trx });
-          expect(created).toEqual([]);
-        });
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      } finally {
-        User.off("create", listener);
-      }
-      expect(created).toEqual(["committed"]);
+          expect(emitted).toEqual([]);
+        })
+      );
+      expect(observed).toEqual({
+        emitted: [
+          [
+            { name: "committed" },
+            expect.objectContaining({ name: "committed" }),
+          ],
+        ],
+        unhandled: [],
+      });
+    });
+    test("emits update only after the transaction commits", async () => {
+      const user = await User.saveAndFetch({ name: "before" });
+      const observed = await observe(User, "update", (emitted) =>
+        db.transaction(async (trx) => {
+          await User.save({ id: user.id, name: "after" }, { db: trx });
+          expect(emitted).toEqual([]);
+        })
+      );
+      expect(observed).toEqual({
+        emitted: [
+          [
+            { id: user.id, name: "after" },
+            expect.objectContaining({ id: user.id, name: "after" }),
+          ],
+        ],
+        unhandled: [],
+      });
+    });
+    test("emits delete only after the transaction commits", async () => {
+      const user = await UserHardDelete.saveAndFetch({ name: "removed" });
+      const observed = await observe(UserHardDelete, "delete", (emitted) =>
+        db.transaction(async (trx) => {
+          await UserHardDelete.delete({ id: user.id }, { db: trx });
+          expect(emitted).toEqual([]);
+        })
+      );
+      expect(observed).toEqual({ emitted: [[user]], unhandled: [] });
     });
     test("a rolled back save leaves no unhandled rejection and emits nothing", async () => {
-      const created: string[] = [];
-      const listener = (
-        _record: Partial<UserRecordType>,
-        user: UserRecordType
-      ) => created.push(user.name);
       const rollback = new Error("roll back the save");
-      User.on("create", listener);
-      try {
-        const reasons = await unhandledRejectionsDuring(async () => {
-          await expect(
-            db.transaction(async (trx) => {
-              await User.save({ name: "rolled back" }, { db: trx });
-              throw rollback;
-            })
-          ).rejects.toBe(rollback);
-        });
-        expect(reasons).toEqual([]);
-      } finally {
-        User.off("create", listener);
-      }
-      expect(created).toEqual([]);
+      const observed = await observe(User, "create", () =>
+        expect(
+          db.transaction(async (trx) => {
+            await User.save({ name: "rolled back" }, { db: trx });
+            throw rollback;
+          })
+        ).rejects.toBe(rollback)
+      );
+      expect(observed).toEqual({ emitted: [], unhandled: [] });
       await expect(User.fetch({ name: "rolled back" })).resolves.toEqual(null);
     });
     test("a rolled back delete leaves no unhandled rejection and emits nothing", async () => {
       const user = await UserHardDelete.saveAndFetch({ name: "kept" });
-      const deleted: number[] = [];
-      const listener = (found: UserRecordType) => deleted.push(found.id);
       const rollback = new Error("roll back the delete");
-      UserHardDelete.on("delete", listener);
-      try {
-        const reasons = await unhandledRejectionsDuring(async () => {
-          await expect(
-            db.transaction(async (trx) => {
-              await UserHardDelete.delete({ id: user.id }, { db: trx });
-              throw rollback;
-            })
-          ).rejects.toBe(rollback);
-        });
-        expect(reasons).toEqual([]);
-      } finally {
-        UserHardDelete.off("delete", listener);
-      }
-      expect(deleted).toEqual([]);
+      const observed = await observe(UserHardDelete, "delete", () =>
+        expect(
+          db.transaction(async (trx) => {
+            await UserHardDelete.delete({ id: user.id }, { db: trx });
+            throw rollback;
+          })
+        ).rejects.toBe(rollback)
+      );
+      expect(observed).toEqual({ emitted: [], unhandled: [] });
       await expect(UserHardDelete.fetch({ id: user.id })).resolves.toEqual(
         user
       );

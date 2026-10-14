@@ -90,16 +90,20 @@ export abstract class Model<T> extends EventEmitter {
     return (opts?.db || this._db) as KnexType;
   }
 
-  private afterCommit(opts: Transactable, emitEvents: () => void) {
-    // We're in a transaction, wait for the commit before sending events
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const trx = opts.db as Knex.Transaction<any, any[]> | undefined;
-    if (trx?.executionPromise) {
+  private emitAfterCommit<K extends keyof ModelEvent<T>>(
+    { db }: Transactable,
+    event: K,
+    ...args: Parameters<ModelEvent<T>[K]>
+  ) {
+    if (db && "executionPromise" in db) {
       // A rollback rejects executionPromise. Whoever ran the transaction
-      // already receives that rejection, so only skip the events here.
-      trx.executionPromise.then(emitEvents, () => {});
+      // already receives that rejection, so only skip the event here.
+      db.executionPromise.then(
+        () => this.emit(event, ...args),
+        () => {}
+      );
     } else {
-      emitEvents();
+      this.emit(event, ...args);
     }
   }
 
@@ -153,22 +157,13 @@ export abstract class Model<T> extends EventEmitter {
         opts
       );
     }
-    const emitUpdate = recordExists && this.listenerCount("update") > 0;
-    const emitCreate = !recordExists && this.listenerCount("create") > 0;
-    if ((emitCreate || emitUpdate) && !newRecord) {
-      newRecord = await this.fetchOrThrow(
-        { [this.idField]: id } as unknown as T,
-        opts
-      );
+    const event = recordExists ? "update" : "create";
+    if (this.listenerCount(event) > 0) {
+      const finalRecord =
+        newRecord ??
+        (await this.fetchOrThrow({ [this.idField]: id } as unknown as T, opts));
+      this.emitAfterCommit(opts, event, record, finalRecord);
     }
-    this.afterCommit(opts, () => {
-      if (emitCreate) {
-        this.emit("create", record, newRecord!);
-      }
-      if (emitUpdate) {
-        this.emit("update", record, newRecord!);
-      }
-    });
 
     if (opts.returnNew) {
       return newRecord;
@@ -223,9 +218,7 @@ export abstract class Model<T> extends EventEmitter {
           new Error("DELETE_NOT_IMPLEMENTED")
         );
       }
-      this.afterCommit(opts, () => {
-        this.emit("delete", found);
-      });
+      this.emitAfterCommit(opts, "delete", found);
     }
   }
 }
