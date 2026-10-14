@@ -90,6 +90,27 @@ export abstract class Model<T> extends EventEmitter {
     return (opts?.db || this._db) as KnexType;
   }
 
+  private emitAfterCommit<K extends keyof ModelEvent<T>>(
+    { db }: Transactable,
+    event: K,
+    ...args: Parameters<ModelEvent<T>[K]>
+  ) {
+    if (db && "executionPromise" in db) {
+      // executionPromise rejects when the transaction rolls back with an
+      // error, which whoever ran the transaction already receives, so only
+      // skip the event then. It resolves on a commit, but also on
+      // trx.rollback() with no error (knex defaults doNotRejectOnRollback to
+      // true) and when a nested transaction releases its savepoint, so the
+      // event fires in those cases too.
+      db.executionPromise.then(
+        () => this.emit(event, ...args),
+        () => {}
+      );
+    } else {
+      this.emit(event, ...args);
+    }
+  }
+
   async save(record: Partial<T>, opts: SaveOptions = {}): Promise<T | null> {
     const db = this.db(opts);
     const saveRecord = { ...record };
@@ -140,30 +161,12 @@ export abstract class Model<T> extends EventEmitter {
         opts
       );
     }
-    const emitUpdate = recordExists && this.listenerCount("update") > 0;
-    const emitCreate = !recordExists && this.listenerCount("create") > 0;
-    if ((emitCreate || emitUpdate) && !newRecord) {
-      newRecord = await this.fetchOrThrow(
-        { [this.idField]: id } as unknown as T,
-        opts
-      );
-    }
-    // We're in a transaction, wait for the commit before sending events
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const trx = opts.db as Knex.Transaction<any, any[]> | null;
-    if (trx?.executionPromise) {
-      trx.executionPromise.then(() => {
-        if (emitCreate) {
-          this.emit("create", record, newRecord!);
-        }
-        if (emitUpdate) {
-          this.emit("update", record, newRecord!);
-        }
-      });
-    } else if (emitCreate) {
-      this.emit("create", record, newRecord!);
-    } else if (emitUpdate) {
-      this.emit("update", record, newRecord!);
+    const event = recordExists ? "update" : "create";
+    if (this.listenerCount(event) > 0) {
+      const finalRecord =
+        newRecord ??
+        (await this.fetchOrThrow({ [this.idField]: id } as unknown as T, opts));
+      this.emitAfterCommit(opts, event, record, finalRecord);
     }
 
     if (opts.returnNew) {
@@ -219,16 +222,7 @@ export abstract class Model<T> extends EventEmitter {
           new Error("DELETE_NOT_IMPLEMENTED")
         );
       }
-      // We're in a transaction, wait for the commit before sending events
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const trx = opts.db as Knex.Transaction<any, any[]> | null;
-      if (trx?.executionPromise) {
-        trx.executionPromise.then(() => {
-          this.emit("delete", found);
-        });
-      } else {
-        this.emit("delete", found);
-      }
+      this.emitAfterCommit(opts, "delete", found);
     }
   }
 }
