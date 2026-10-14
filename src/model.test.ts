@@ -86,6 +86,19 @@ const User = new UserModel();
 const UserWithParse = new UserWithParseModel();
 const UserHardDelete = new UserHardDeleteModel();
 
+const unhandledRejectionsDuring = async (run: () => Promise<void>) => {
+  const reasons: unknown[] = [];
+  const record = (reason: unknown) => reasons.push(reason);
+  process.on("unhandledRejection", record);
+  try {
+    await run();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    process.off("unhandledRejection", record);
+  }
+  return reasons;
+};
+
 describe("Model", () => {
   describe("constructor", () => {
     test("sets idField", () => {
@@ -191,6 +204,74 @@ describe("Model", () => {
       );
       await expect(UserHardDelete.fetch({ id: user.id })).resolves.toEqual(
         null
+      );
+    });
+  });
+  describe("transactions", () => {
+    test("emits create only after the transaction commits", async () => {
+      const created: string[] = [];
+      const listener = (
+        _record: Partial<UserRecordType>,
+        user: UserRecordType
+      ) => created.push(user.name);
+      User.on("create", listener);
+      try {
+        await db.transaction(async (trx) => {
+          await User.save({ name: "committed" }, { db: trx });
+          expect(created).toEqual([]);
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      } finally {
+        User.off("create", listener);
+      }
+      expect(created).toEqual(["committed"]);
+    });
+    test("a rolled back save leaves no unhandled rejection and emits nothing", async () => {
+      const created: string[] = [];
+      const listener = (
+        _record: Partial<UserRecordType>,
+        user: UserRecordType
+      ) => created.push(user.name);
+      const rollback = new Error("roll back the save");
+      User.on("create", listener);
+      try {
+        const reasons = await unhandledRejectionsDuring(async () => {
+          await expect(
+            db.transaction(async (trx) => {
+              await User.save({ name: "rolled back" }, { db: trx });
+              throw rollback;
+            })
+          ).rejects.toBe(rollback);
+        });
+        expect(reasons).toEqual([]);
+      } finally {
+        User.off("create", listener);
+      }
+      expect(created).toEqual([]);
+      await expect(User.fetch({ name: "rolled back" })).resolves.toEqual(null);
+    });
+    test("a rolled back delete leaves no unhandled rejection and emits nothing", async () => {
+      const user = await UserHardDelete.saveAndFetch({ name: "kept" });
+      const deleted: number[] = [];
+      const listener = (found: UserRecordType) => deleted.push(found.id);
+      const rollback = new Error("roll back the delete");
+      UserHardDelete.on("delete", listener);
+      try {
+        const reasons = await unhandledRejectionsDuring(async () => {
+          await expect(
+            db.transaction(async (trx) => {
+              await UserHardDelete.delete({ id: user.id }, { db: trx });
+              throw rollback;
+            })
+          ).rejects.toBe(rollback);
+        });
+        expect(reasons).toEqual([]);
+      } finally {
+        UserHardDelete.off("delete", listener);
+      }
+      expect(deleted).toEqual([]);
+      await expect(UserHardDelete.fetch({ id: user.id })).resolves.toEqual(
+        user
       );
     });
   });

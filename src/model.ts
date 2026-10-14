@@ -90,6 +90,19 @@ export abstract class Model<T> extends EventEmitter {
     return (opts?.db || this._db) as KnexType;
   }
 
+  private afterCommit(opts: Transactable, emitEvents: () => void) {
+    // We're in a transaction, wait for the commit before sending events
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const trx = opts.db as Knex.Transaction<any, any[]> | undefined;
+    if (trx?.executionPromise) {
+      // A rollback rejects executionPromise. Whoever ran the transaction
+      // already receives that rejection, so only skip the events here.
+      trx.executionPromise.then(emitEvents, () => {});
+    } else {
+      emitEvents();
+    }
+  }
+
   async save(record: Partial<T>, opts: SaveOptions = {}): Promise<T | null> {
     const db = this.db(opts);
     const saveRecord = { ...record };
@@ -148,23 +161,14 @@ export abstract class Model<T> extends EventEmitter {
         opts
       );
     }
-    // We're in a transaction, wait for the commit before sending events
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const trx = opts.db as Knex.Transaction<any, any[]> | null;
-    if (trx?.executionPromise) {
-      trx.executionPromise.then(() => {
-        if (emitCreate) {
-          this.emit("create", record, newRecord!);
-        }
-        if (emitUpdate) {
-          this.emit("update", record, newRecord!);
-        }
-      });
-    } else if (emitCreate) {
-      this.emit("create", record, newRecord!);
-    } else if (emitUpdate) {
-      this.emit("update", record, newRecord!);
-    }
+    this.afterCommit(opts, () => {
+      if (emitCreate) {
+        this.emit("create", record, newRecord!);
+      }
+      if (emitUpdate) {
+        this.emit("update", record, newRecord!);
+      }
+    });
 
     if (opts.returnNew) {
       return newRecord;
@@ -219,16 +223,9 @@ export abstract class Model<T> extends EventEmitter {
           new Error("DELETE_NOT_IMPLEMENTED")
         );
       }
-      // We're in a transaction, wait for the commit before sending events
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const trx = opts.db as Knex.Transaction<any, any[]> | null;
-      if (trx?.executionPromise) {
-        trx.executionPromise.then(() => {
-          this.emit("delete", found);
-        });
-      } else {
+      this.afterCommit(opts, () => {
         this.emit("delete", found);
-      }
+      });
     }
   }
 }
