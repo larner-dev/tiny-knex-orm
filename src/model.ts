@@ -96,8 +96,12 @@ export abstract class Model<T> extends EventEmitter {
     ...args: Parameters<ModelEvent<T>[K]>
   ) {
     if (db && "executionPromise" in db) {
-      // A rollback rejects executionPromise. Whoever ran the transaction
-      // already receives that rejection, so only skip the event here.
+      // executionPromise rejects when the transaction rolls back with an
+      // error, which whoever ran the transaction already receives, so only
+      // skip the event then. It resolves on a commit, but also on
+      // trx.rollback() with no error (knex defaults doNotRejectOnRollback to
+      // true) and when a nested transaction releases its savepoint, so the
+      // event fires in those cases too.
       db.executionPromise.then(
         () => this.emit(event, ...args),
         () => {}
